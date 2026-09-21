@@ -5,7 +5,7 @@ This C++ console program accepts commands for setting, starting, stopping, and a
 
 ## Quick Start
 
-### Requirements
+### Prerequisites
 
 - `main.cpp`
 - A C++17 compiler such as MinGW-w64 `g++`
