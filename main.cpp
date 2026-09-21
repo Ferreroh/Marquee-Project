@@ -12,13 +12,19 @@
  * Description:
  *   Displays the welcome header and handles the main command loop.
  *
- * Compile: g++ -std=c++17 Marquee.cpp -o Marquee
+ * Compile: g++ -std=c++17 main.cpp -o Marquee -pthread
  * Run: ./Marquee
  */
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cctype>
 #include <iostream>
-#include <string>
+#include <mutex>
 #include <sstream>
+#include <string>
+#include <thread>
 
 int main() {
     // Display the welcome header and group details once.
@@ -30,14 +36,86 @@ int main() {
     std::cout << "Version: 1\n";
     std::cout << "Version date: 2026-09-18\n\n";
 
-    // Store the user's command and the text for the marquee
+    // Store the user's command and the text for the marquee.
     std::string command;
     std::string marqueeText;
 
+    // These values must remain available between command-loop iterations.
+    int speed = 100;
+    bool marqueeRunning = false;
+    bool endAnimation = false;
+    std::size_t marqueePosition = 0;
+    int marqueeDirection = 1;
+
+    std::mutex stateMutex;
+    std::mutex outputMutex;
+    std::condition_variable animationCondition;
+
+    // Run the marquee separately so the console can still accept commands.
+    std::thread animationThread([&]() {
+        constexpr std::size_t displayWidth = 60;
+        std::unique_lock<std::mutex> stateLock(stateMutex);
+
+        while (!endAnimation) {
+            animationCondition.wait(stateLock, [&]() {
+                return marqueeRunning || endAnimation;
+            });
+
+            if (endAnimation) {
+                break;
+            }
+
+            const std::string text = marqueeText;
+            const int frameDelay = speed;
+            const std::size_t maximumPosition =
+                text.length() < displayWidth
+                    ? displayWidth - text.length()
+                    : 0;
+
+            std::string frame(marqueePosition, ' ');
+            frame += text;
+
+            if (maximumPosition > 0) {
+                if (marqueeDirection > 0 &&
+                    marqueePosition >= maximumPosition) {
+                    marqueeDirection = -1;
+                }
+                else if (marqueeDirection < 0 && marqueePosition == 0) {
+                    marqueeDirection = 1;
+                }
+
+                if (marqueeDirection > 0) {
+                    ++marqueePosition;
+                }
+                else {
+                    --marqueePosition;
+                }
+            }
+
+            stateLock.unlock();
+            {
+                std::lock_guard<std::mutex> outputLock(outputMutex);
+                // Save the cursor, update the line above the prompt, and
+                // restore the cursor so typed input remains in place.
+                std::cout << "\033[s\033[1A\r\033[2KMarquee: "
+                          << frame << "\033[u" << std::flush;
+            }
+            stateLock.lock();
+
+            animationCondition.wait_for(
+                stateLock,
+                std::chrono::milliseconds(frameDelay),
+                [&]() { return !marqueeRunning || endAnimation; }
+            );
+        }
+    });
+
     // Keep displaying the prompt until the user exits.
     while (true) {
-        int speed = 100;
-        std::cout << "Command> ";
+        {
+            std::lock_guard<std::mutex> outputLock(outputMutex);
+            std::cout << "Command> " << std::flush;
+        }
 
         // Read the complete command, including spaces.
         // End the loop if input is no longer available.
@@ -45,36 +123,77 @@ int main() {
             break;
         }
 
+        std::lock_guard<std::mutex> outputLock(outputMutex);
+
         if (command == "help") {
             // Display all commands and their descriptions.
             std::cout
-            << "help - displays the commands and its description\n"
-            << "start_marquee - starts the marquee \"animation\"\n"
-            << "stop_marquee - stops the marquee \"animation\"\n"
-            << "set_text - accepts a text input and displays it as a marquee\n"
-            << "set_speed - sets the marquee animation refresh in milliseconds\n"
-            << "exit - terminates the console\n";
+                << "help - displays the commands and their descriptions\n"
+                << "start_marquee - starts or resumes the marquee animation\n"
+                << "stop_marquee - pauses the marquee animation\n"
+                << "set_text <your_string> - saves text for the marquee\n"
+                << "set_speed <milliseconds> - sets the refresh rate from 10 to 1000 ms\n"
+                << "exit - terminates the console\n";
         }
         else if (command == "start_marquee") {
-            // Insert start marquee logic here.
             // Start or resume the left-and-right animation.
+            std::lock_guard<std::mutex> stateLock(stateMutex);
+            if (marqueeText.empty()) {
+                std::cout
+                    << "Error: No marquee text has been set. "
+                    << "Use set_text <your_string>.\n";
+            }
+            else if (marqueeRunning) {
+                std::cout << "Marquee is already running.\n";
+            }
+            else {
+                marqueeRunning = true;
+                std::cout << "Marquee animation started.\n";
+                std::cout << "Marquee: \n";
+                animationCondition.notify_one();
+            }
         }
         else if (command == "stop_marquee") {
-            // Insert stop marquee logic here.
             // Pause the animation at its current position.
+            std::lock_guard<std::mutex> stateLock(stateMutex);
+            if (!marqueeRunning) {
+                std::cout << "Marquee is not running.\n";
+            }
+            else {
+                marqueeRunning = false;
+                std::cout << "Marquee animation stopped.\n";
+                animationCondition.notify_one();
+            }
         }
         else if (command == "set_text" ||
                  command.compare(0, 9, "set_text ") == 0) {
-            // Insert set text logic here.
             // Accept text after "set_text " on the same line.
-            // Check for missing or blank text before saving.
-            // Store valid text in marqueeText and display confirmation.
+            const std::string newText =
+                command.size() > 9 ? command.substr(9) : "";
+
+            const bool blankText = newText.empty() ||
+                newText.find_first_not_of(" \t\r\n") == std::string::npos;
+
+            if (blankText) {
+                std::cout
+                    << "Error: No text provided. "
+                    << "Use set_text <your_string>.\n";
+            }
+            else {
+                std::lock_guard<std::mutex> stateLock(stateMutex);
+                marqueeText = newText;
+                marqueePosition = 0;
+                marqueeDirection = 1;
+                std::cout << "Text saved for marquee: "
+                          << marqueeText << "\n";
+                animationCondition.notify_one();
+            }
         }
         else if (command == "set_speed" ||
                  command.compare(0, 10, "set_speed ") == 0) {
-                    // Get the value after "set_speed ".
+            // Get the value after "set_speed ".
             std::istringstream values(
-                command.size() > 9 ? command.substr(10) : ""
+                command.size() > 10 ? command.substr(10) : ""
             );
 
             int newSpeed;
@@ -86,12 +205,20 @@ int main() {
                     << "Error: Use set_speed <10 to 1000 milliseconds>.\n";
             }
             else {
+                std::lock_guard<std::mutex> stateLock(stateMutex);
                 speed = newSpeed;
                 std::cout << "Speed set to " << speed << " ms.\n";
+                animationCondition.notify_one();
             }
         }
         else if (command == "exit") {
-            // Insert animation cleanup here before ending the program.
+            // Stop and join the animation thread before ending the program.
+            {
+                std::lock_guard<std::mutex> stateLock(stateMutex);
+                marqueeRunning = false;
+                endAnimation = true;
+            }
+            animationCondition.notify_one();
             std::cout << "Terminating console...\n";
             std::cout << "Goodbye!\n";
             break;
@@ -102,6 +229,18 @@ int main() {
         }
 
         std::cout << "\n";
+    }
+
+    // Clean up correctly when the input stream closes unexpectedly.
+    {
+        std::lock_guard<std::mutex> stateLock(stateMutex);
+        marqueeRunning = false;
+        endAnimation = true;
+    }
+    animationCondition.notify_one();
+
+    if (animationThread.joinable()) {
+        animationThread.join();
     }
 
     return 0;
