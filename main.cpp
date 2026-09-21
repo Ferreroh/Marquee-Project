@@ -18,6 +18,7 @@
 
 #include <iostream>
 #include <string>
+#include <sstream>
 
 int main() {
     // Display the welcome header and group details once.
@@ -29,12 +30,13 @@ int main() {
     std::cout << "Version: 1\n";
     std::cout << "Version date: 2026-09-18\n\n";
 
-    // Store the user's command and the text for the marquee.
+    // Store the user's command and the text for the marquee
     std::string command;
     std::string marqueeText;
 
     // Keep displaying the prompt until the user exits.
     while (true) {
+        int speed = 100;
         std::cout << "Command> ";
 
         // Read the complete command, including spaces.
@@ -70,10 +72,23 @@ int main() {
         }
         else if (command == "set_speed" ||
                  command.compare(0, 10, "set_speed ") == 0) {
-            // Insert set speed logic here.
-            // Accept a whole number from 10 to 1000 milliseconds.
-            // Lower values make the animation faster.
-            // Display an error for missing or invalid values.
+                    // Get the value after "set_speed ".
+            std::istringstream values(
+                command.size() > 9 ? command.substr(10) : ""
+            );
+
+            int newSpeed;
+            std::string extra;
+
+            if (!(values >> newSpeed) || (values >> extra) ||
+                newSpeed < 10 || newSpeed > 1000) {
+                std::cout
+                    << "Error: Use set_speed <10 to 1000 milliseconds>.\n";
+            }
+            else {
+                speed = newSpeed;
+                std::cout << "Speed set to " << speed << " ms.\n";
+            }
         }
         else if (command == "exit") {
             // Insert animation cleanup here before ending the program.
