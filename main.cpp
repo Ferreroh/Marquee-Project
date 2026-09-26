@@ -67,13 +67,27 @@ int main() {
 
             const std::string text = marqueeText;
             const int frameDelay = speed;
+            const bool textFitsDisplay = text.length() < displayWidth;
+            const std::string scrollableText =
+                textFitsDisplay ? text : " " + text + " ";
             const std::size_t maximumPosition =
-                text.length() < displayWidth
+                textFitsDisplay
                     ? displayWidth - text.length()
-                    : 0;
+                    : scrollableText.length() - displayWidth;
 
-            std::string frame(marqueePosition, ' ');
-            frame += text;
+            std::string frame;
+            if (textFitsDisplay) {
+                // Keep the original behavior for text shorter than the display.
+                frame = std::string(marqueePosition, ' ') + text;
+            }
+            else {
+                // Pan a fixed-width window across text that is 60 or more
+                // characters long so the entire message remains animated.
+                frame = scrollableText.substr(
+                    marqueePosition,
+                    displayWidth
+                );
+            }
 
             if (maximumPosition > 0) {
                 if (marqueeDirection > 0 &&
@@ -231,7 +245,7 @@ int main() {
         std::cout << "\n";
     }
 
-    // Clean up correctly when the input stream closes unexpectedly.
+    // Also clean up correctly when the input stream closes unexpectedly.
     {
         std::lock_guard<std::mutex> stateLock(stateMutex);
         marqueeRunning = false;
