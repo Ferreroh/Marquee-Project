@@ -163,7 +163,6 @@ int main() {
             else {
                 marqueeRunning = true;
                 std::cout << "Marquee animation started.\n";
-                std::cout << "Marquee: \n";
                 animationCondition.notify_one();
             }
         }
